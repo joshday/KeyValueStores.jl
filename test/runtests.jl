@@ -2,64 +2,65 @@ using KeyValueStores
 using Test
 using OrderedCollections
 
-@testset "KeyValueStores.jl" begin
-    @testset "Store" begin
-        @testset "Constructors" begin
-            # empty
-            @test Store() isa Store{Any, OrderedDict{Symbol, Any}}
-            @test Store{Int}() isa Store{Int, OrderedDict{Symbol, Int}}
-            @test Store{Int, Dict{Symbol, Int}}() isa Store{Int, Dict{Symbol, Int}}
+#-----------------------------------------------------------------------------# Store
+@testset "Store" begin
+    @test_nowarn Store()
+    @test_nowarn Store(Dict{Symbol, Any}; x=1,y="two")
+    @test_nowarn Store(Dict{Symbol, Any}(:x => 1, :y => "two"))
 
-            # keyword
-            @test Store(x=1) isa Store{Int}
-            @test Store{Int}(x=1) isa Store{Int}
-            @test Store{Int, Dict{Symbol, Int}}(x=1) isa Store{Int, Dict{Symbol, Int}}
+    @test Store(Dict{Symbol, Any}; x=1,y="two") == Store(Dict{Symbol, Any}(:x => 1, :y => "two"))
+end
+#-----------------------------------------------------------------------------# DefaultStore
+@testset "DefaultStore" begin
+    @test_nowarn DefaultStore()
+    @test_nowarn DefaultStore(Dict{Symbol, Any}; x=1,y="two")
+    @test_nowarn DefaultStore(Dict{Symbol, Any}(:x => 1, :y => "two"))
 
-            # pair
-            @test Store(:x => 1) isa Store{Int}
-            @test Store{Int}(:x => 1) isa Store{Int}
-            @test Store{Int, Dict{Symbol, Int}}(:x => 1) isa Store{Int, Dict{Symbol, Int}}
+    @test DefaultStore(Dict{Symbol, Any}; x=1,y="two") == DefaultStore(Dict{Symbol, Any}(:x => 1, :y => "two"))
+end
 
-            # pairs
-            @test Store(:x => 1, :y => 2) isa Store{Int}
-            @test Store{Int}(:x => 1, :y => 2) isa Store{Int}
-            @test Store{Int, Dict{Symbol, Int}}(:x => 1, :y => 2) isa Store{Int}
+#-----------------------------------------------------------------------------# Base methods
+@testset "Base methods" begin
+    o = Store(x=1,y="two")
+    odef = DefaultStore(x=1,y="two")
 
-            # dict
-            @test Store(Dict(:x => 1)) isa Store{Int}
-            @test Store{Int}(Dict(:x => 1)) isa Store{Int}
-            @test Store{Int, Dict{Symbol, Int}}(Dict(:x => 1)) isa Store{Int, Dict{Symbol, Int}}
-        end
-        @testset "Base functions" begin
-            o = Store(x=1, y=2)
-            @test sort!(collect(keys(o))) == [:x, :y]
-            @test sort!(collect(propertynames(o))) == [:x, :y]
-            @test get(o, :z, 3) == 3
-            @test !haskey(o, :z)
-            @test get!(o, :z, 3) == 3
-            @test haskey(o, :z)
-            delete!(o, :z)
-            @test !haskey(o, :z)
-            @test o.x == o[:x] == o["x"] == 1
-            @test o.y == o[:y] == o["y"] == 2
-            o.z = 3
-            o[:z] = 3
-            o["z"] = 3
-            @test o.z == o[:z] == o["z"] == 3
-        end
-        @testset "DefaultStore" begin
-            d = DefaultStore(nothing, x=1, y=2)
-            @test d.x == d["x"] == d[:x] == 1
-            @test d.z === d["z"] === d[:z] === nothing
-            @test length(d) == 2
-            @test get(d, :z, 3) == 3
-        end
-        @testset "NestedStore" begin
-            o = NestedStore(x=1, y=2)
-            @test o.x == o[:x] == o["x"] == 1
-            @test (o.a.b.c.d = 5) == 5
-            @test o.a.b.c.d == 5
-            @test o.a isa Store
-        end
-    end
+    @test o == odef
+
+    @test o[:x] == odef[:x] == o.x == odef.x
+    @test o[:y] == odef[:y] == o.y == odef.y
+    @test get(o, :z, nothing) === odef[:z] === odef.z === nothing
+    @test get(odef, :z, 3) == 3  # With `get`, default argument is used, not DefaultStore default
+    @test collect(o) == collect(odef) == [:x => 1, :y => "two"]
+    @test length(o) == length(odef) == 2
+    @test pop!(o) == pop!(odef) == (:y => "two")
+    @test length(o) == length(odef) == 1
+    empty!(o)
+    empty!(odef)
+    @test length(o) == length(odef) == 0
+
+    o[:x] = 3
+    odef[:x] = 3
+    @test o[:x] == o.x == odef[:x] == odef.x == 3
+
+    o.y = "four"
+    odef.y = "four"
+    @test o[:y] == o.y == odef[:y] == odef.y == "four"
+
+    o_copy = copy(o)
+    odef_copy = copy(odef)
+    @test o_copy isa Store
+    @test odef_copy isa DefaultStore
+    @test o_copy[:x] == odef_copy[:x] == o.x == odef.x == 3
+    @test o_copy[:y] == odef_copy[:y] == o.y == odef.y == "four"
+
+    o_copy.z = 5
+    odef_copy.z = 5
+    @test o_copy == odef_copy
+    @test o_copy != o
+
+    push!(o, :z => 5)
+    push!(odef, :z => 5)
+    @test o == odef == o_copy == odef_copy
+
+    @test freeze(o) == freeze(odef) == o_copy == odef_copy
 end

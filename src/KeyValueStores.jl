@@ -2,96 +2,115 @@ module KeyValueStores
 
 using OrderedCollections
 
-export Store, DefaultStore, Default, NestedStore
+export Store, DefaultStore
 
 #-----------------------------------------------------------------------------# AbstractStore
 abstract type AbstractStore{T} <: AbstractDict{Symbol, T} end
 
-# function Base.summary(io::IO, o::AbstractStore{T}) where {T}
-#     print(io, typeof(o))
-# end
+dict(o::AbstractStore) = getfield(o, :dict)
 
-dict(o::T) where {T <: AbstractStore} = getfield(o, first(fieldnames(T)))
-
-Base.copy(o::T) where {T <: AbstractStore} = T(copy(dict(o)))
-Base.iterate(o::AbstractStore, state...) = iterate(dict(o), state...)
-
-# pass-to-dict methods
-for f in (:length, :keys, :values)
-    @eval Base.$f(o::AbstractStore) = $f(dict(o))
+# functions that pass through to dict
+for f in (:length, :keys, :values, :iterate, :getindex, :setindex!, :get, :get!, :pop!)
+    @eval Base.$f(o::AbstractStore, x...) = $f(dict(o), x...)
 end
 
-# Second-arg-is-a-key methods
-for f in (:getindex, :haskey, :delete!)
-    @eval Base.$f(o::AbstractStore, k::Symbol) = $f(dict(o), k)
-    @eval Base.$f(o::AbstractStore, k::AbstractString) = $f(o, Symbol(k))
-end
-Base.setindex!(o::AbstractStore, v, k::Symbol) = setindex!(dict(o), v, k)
-Base.setindex!(o::AbstractStore, v, k::AbstractString) = setindex!(o, v, Symbol(k))
-
-# get/get!
-for f in [:get, :get!]
-    @eval Base.$f(o::AbstractStore, k::Symbol, default) = $f(dict(o), k, default)
-    @eval Base.$f(o::AbstractStore, k::AbstractString, default) = $f(o, Symbol(k), default)
-end
-
-# mutating and copy-based methods
-Base.empty(o::AbstractStore) = empty!(copy(o))
 Base.empty!(o::AbstractStore) = (empty!(dict(o)); o)
-Base.sort(o::AbstractStore; kw...) = sort!(copy(o); kw...)
-Base.sort!(o::AbstractStore; kw...) = (sort!(dict(o); kw...); o)
-Base.merge(o::AbstractStore, x::AbstractDict...) = merge!(copy(o), x...)
-Base.merge!(o::AbstractStore, x::AbstractDict...) = (merge!(dict(o), x...); o)
+Base.push!(o::AbstractStore{T}, x::Pair{Symbol, T}) where {T} = (push!(dict(o), x); o)
+Base.copy(o::T) where {T <: AbstractStore} = T(copy(dict(o)), (getfield(o, x) for x in setdiff(fieldnames(T), (:dict,)))...)
+Base.merge(o::AbstractStore{T}, x::AbstractDict{Symbol, T}) where {T} = (merge!(copy(o), x); o)
+Base.merge!(o::AbstractStore{T}, x::AbstractDict{Symbol, T}) where {T} = (merge!(dict(o), x); o)
 
-# get/set property
-Base.propertynames(o::AbstractStore) = keys(dict(o))
-Base.getproperty(o::AbstractStore, k::Symbol) = getindex(o, k)
-Base.setproperty!(o::AbstractStore, k::Symbol, v) = setindex!(o, v, k)
+# properties map to keys
+Base.propertynames(o::AbstractStore) = keys(o)
+Base.getproperty(o::AbstractStore, x::Symbol) = getindex(o, x)
+Base.setproperty!(o::AbstractStore, x::Symbol, v) = setindex!(o, v, x)
 
-# constructor helpers
-dict_arg() = ()
-dict_arg(x) = isempty(x) ? Pair{Symbol,Any}[] : (dict_arg(x) for x in x)
-dict_arg(x::Pair) = Symbol(x[1]) => x[2]
 
 #-----------------------------------------------------------------------------# Store
 struct Store{T, D <: AbstractDict{Symbol, T}} <: AbstractStore{T}
     dict::D
-    Store(dict::D) where {T, D <: AbstractDict{Symbol, T}} = new{T, D}(dict)
 end
-Store(x...; kw...) = Store(OrderedDict(dict_arg(x)..., dict_arg(kw)...))
-Store{T}(x...; kw...) where {T} = Store(OrderedDict{Symbol, T}(dict_arg(x)..., dict_arg(kw)...))
-Store{T, D}(x...; kw...) where {T, D <: AbstractDict{Symbol, T}} = Store(D(dict_arg(x)..., dict_arg(kw)...))
-
+Store(T::Type = OrderedDict{Symbol, Any}; kw...) = Store(T(kw))
 
 #-----------------------------------------------------------------------------# DefaultStore
-struct DefaultStore{T, D, S <: Store{T, D}, R} <: AbstractStore{Union{T, R}}
-    store::S
+struct DefaultStore{T, D <: AbstractDict{Symbol, T}, R} <: AbstractStore{Union{T, R}}
+    dict::D
     default::R
-    DefaultStore(store::S, default::R) where {T, D, S <: Store{T, D}, R} = new{T, D, S, R}(store, default)
+    DefaultStore(dict::D, default::R=nothing) where {T, D <: AbstractDict{Symbol, T}, R} = new{T, D, R}(dict, default)
+    DefaultStore{T,D,R}(dict, default) where {T,D,R} = new{T,D,R}(dict, default)
 end
-DefaultStore(default, x...; kw...) = DefaultStore(Store(x...; kw...), default)
-DefaultStore{T}(default, x...; kw...) where {T} = DefaultStore(Store{T}(x...; kw...), default)
-DefaultStore{T, D}(default, x...; kw...) where {T, D} = DefaultStore(Store{T, D}(x...; kw...), default)
+DefaultStore(T::Type = OrderedDict{Symbol, Any}, default=nothing; kw...) = DefaultStore(T(kw), nothing)
+Base.getindex(o::DefaultStore, k::Symbol) = get(dict(o), k, getfield(o, :default))
 
-Base.getindex(o::DefaultStore, k::Symbol) = haskey(o, k) ? dict(o)[k] : getfield(o, :default)
+# #-----------------------------------------------------------------------------# defaults
+# struct NoDefault end
+# Base.show(io::IO, o::NoDefault) = print(io, "NoDefault")
+
+# struct Nested
+#     path::Vector{Symbol}
+# end
+# Nested() = Nested(Symbol[])
+# Base.show(io::IO, o::Nested) = print(io, "Nested")
+
+# #-----------------------------------------------------------------------------# references
+# struct NoRef end
+# Base.show(io::IO, o::NoRef) = print(io, "NoRef")
+# check_key(default, ::NoRef, ::Symbol) = true
+# check_value(default, ::NoRef, ::Symbol, ::Any) = true
 
 
-#-----------------------------------------------------------------------------# NestedStore
-struct NestedStore{D, S <: Store{Any, D}} <: AbstractStore{Any}
-    store::S
-    path::Vector{Symbol}
-end
-NestedStore(x...; kw...) = NestedStore(Store{Any}(x...; kw...), Symbol[])
-NestedStore{D}(x...; kw...) where {D} = NestedStore(Store{Any, D}(x...; kw...), Symbol[])
 
-Base.getindex(o::NestedStore, k::Symbol) = haskey(o, k) ? dict(o)[k] : NestedStore(getfield(o, :store), [getfield(o, :path); k])
 
-function Base.setindex!(o::NestedStore{D, S}, v, k::Symbol) where {D, S}
-    obj = dict(o)
-    for p in getfield(o, :path)
-        obj = get!(obj, p, S())
-    end
-    obj[k] = v
-end
+
+# #-----------------------------------------------------------------------------# Store
+# struct Store{T, D <: AbstractDict{Symbol, T}, R, S} <: AbstractDict{Symbol, T}
+#     dict::D
+#     default::S
+#     ref::R
+
+#     function Store(dict::D, default::S = NoDefault(), ref::R = NoRef()) where {T, D <: AbstractDict{Symbol, T}, R, S}
+#         new{T, D, R, S}(dict, default, ref)
+#     end
+# end
+
+# Store(T::Type = Dict{Symbol, Any}, default=NoDefault(), ref=NoRef(); kw...) = Store(T(kw), default, ref)
+
+# dict(o::Store) = getfield(o, :dict)
+# default(o::Store) = getfield(o, :default)
+# ref(o::Store) = getfield(o, :ref)
+
+# check_key(o::Store, k::Symbol) = check_key(default(o), ref(o), k)
+# check_value(o::Store, k::Symbol, v::Any) = check_key(default(o), ref(o), v, k)
+
+# function Base.summary(io::IO, o::Store{T}) where T
+#     print(io, styled"Store({bright_cyan:$(default(o)), $(ref(o)), $T})")
+# end
+
+# #-----------------------------------------------------------------------------#
+# for f in (:length, :keys, :values, :get, :iterate)
+#     @eval Base.$f(o::Store, x...) = $f(dict(o), x...)
+# end
+
+# #-----------------------------------------------------------------------------# getindex
+# function Base.getindex(o::Store{T,D,R,S}, k::Symbol) where {T,D,R,S}
+#     check_key(o, k) || throw(ArgumentError("Store with `ref::$R` does not allow key :$k"))
+#     dict(o)[k]
+# end
+
+# #-----------------------------------------------------------------------------# setindex!
+# function Base.setindex!(o::Store{T,D,R,S}, v, k::Symbol) where {T,D,R,S}
+#     check_key(o, k) || throw(ArgumentError("Store with `ref::$R` does not allow key :$k"))
+#     check_value(o, k, v) || throw(ArgumentError("Store with `ref::$R` does not allow value $v for key :$k"))
+#     setindex!(dict(o), v, k)
+# end
+# function Base.get!(o::Store{T,D,R,S}, k::Symbol, default) where {T,D,R,S}
+#     check_key(o, k) || throw(ArgumentError("Store with `ref::$R` does not allow key :$k"))
+#     haskey(o, k) ? o[k] : default
+# end
+
+# #-----------------------------------------------------------------------------# properties
+# Base.propertynames(o::Store) = keys(o)
+# Base.getproperty(o::Store, x::Symbol) = getindex(o, x)
+# Base.setproperty!(o::Store, x::Symbol, v) = setindex!(o, v, x)
 
 end
