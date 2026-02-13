@@ -1,0 +1,3 @@
+[deps]
+KeyValueStores = "99b27216-9b37-4bb8-ad19-60d6e7774266"
+LocalCoverage = "5f6e1e16-694c-5876-87ef-16b5274f298e"
